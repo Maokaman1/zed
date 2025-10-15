@@ -769,7 +769,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(false, window, cx)
     });
 
     log::info!("constructing reference diagnostics view");
@@ -958,7 +958,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(window, cx)
+        diagnostics.update_stale_excerpts(false, window, cx)
     });
 
     cx.executor()

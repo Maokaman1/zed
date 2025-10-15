@@ -172,7 +172,7 @@ impl ProjectDiagnosticsEditor {
                 }
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
-                    this.update_stale_excerpts(window, cx);
+                    this.update_stale_excerpts(false,window, cx);
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
@@ -190,11 +190,11 @@ impl ProjectDiagnosticsEditor {
                     });
                     cx.emit(EditorEvent::TitleChanged);
 
+                    log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
                     if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. recording change");
+                        this.update_stale_excerpts(true, window, cx);
                     } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
-                        this.update_stale_excerpts(window, cx);
+                        this.update_stale_excerpts(false,window, cx);
                     }
                 }
                 _ => {}
@@ -238,8 +238,8 @@ impl ProjectDiagnosticsEditor {
                             window.focus(&this.focus_handle);
                         }
                     }
-                    EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
-                    EditorEvent::Saved => this.update_stale_excerpts(window, cx),
+                    EditorEvent::Blurred => this.update_stale_excerpts(false, window, cx),
+                    EditorEvent::Saved => this.update_stale_excerpts(false, window, cx),
                     _ => {}
                 }
             },
@@ -283,8 +283,15 @@ impl ProjectDiagnosticsEditor {
         this
     }
 
-    fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.update_excerpts_task.is_some() || self.multibuffer.read(cx).is_dirty(cx) {
+    fn update_stale_excerpts(
+        &mut self,
+        retain_excerpts: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.update_excerpts_task.is_some()
+            || (!retain_excerpts && self.multibuffer.read(cx).is_dirty(cx))
+        {
             return;
         }
 
@@ -312,7 +319,7 @@ impl ProjectDiagnosticsEditor {
                     .log_err()
                 {
                     this.update_in(cx, |this, window, cx| {
-                        this.update_excerpts(buffer, window, cx)
+                        this.update_excerpts(buffer, retain_excerpts, window, cx)
                     })?
                     .await?;
                 }
@@ -381,7 +388,7 @@ impl ProjectDiagnosticsEditor {
     fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
-            self.update_stale_excerpts(window, cx);
+            self.update_stale_excerpts(false, window, cx);
         }
     }
 
@@ -408,7 +415,7 @@ impl ProjectDiagnosticsEditor {
             self.paths_to_update = project_paths;
         });
 
-        self.update_stale_excerpts(window, cx);
+        self.update_stale_excerpts(false, window, cx);
     }
 
     fn diagnostics_are_unchanged(
@@ -431,6 +438,7 @@ impl ProjectDiagnosticsEditor {
     fn update_excerpts(
         &mut self,
         buffer: Entity<Buffer>,
+        retain_excerpts: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -512,7 +520,22 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
-            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = if retain_excerpts {
+                Vec::new()
+            } else {
+                this.update(cx, |this, cx| {
+                    this.multibuffer.update(cx, |multi_buffer, cx| {
+                        multi_buffer
+                            .excerpts_for_buffer(buffer_id, cx)
+                            .into_iter()
+                            .map(|(_, range)| ExcerptRange {
+                                context: range.context.to_point(&buffer_snapshot),
+                                primary: range.primary.to_point(&buffer_snapshot),
+                            })
+                            .collect()
+                    })
+                })?
+            };
             let context_lines = cx.update(|_, cx| multibuffer_context_lines(cx))?;
             for b in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
@@ -576,6 +599,7 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
 
+                // fixme
                 let editor_blocks =
                     anchor_ranges
                         .into_iter()
